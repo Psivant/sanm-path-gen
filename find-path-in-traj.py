@@ -41,12 +41,12 @@ for i, frame_path in enumerate(old_path.trajectory):
 rmsd_min = 1e10
 for i in range(n_traj_frames):
 
-    if( prmsd[1][0][i] > rmsd_cutoff ):
+    if( i>0 and prmsd[1][0][i] > rmsd_cutoff ):
         break
 
     for j in range(n_traj_frames):
     
-        if( prmsd[1][1][j] > rmsd_cutoff ):
+        if( j>0 and prmsd[1][1][j] > rmsd_cutoff ):
             break
 
         mobile_indx = int(prmsd[0][1][j])
@@ -72,7 +72,7 @@ for i in range(2, n_path_frames):
     rmsd_min = 1e10
     for j in range(n_traj_frames):
     
-        if( prmsd[1][i][j] > rmsd_cutoff ):
+        if( j>0 and prmsd[1][i][j] > rmsd_cutoff ):
             break
 
         mobile_indx = int(prmsd[0][i][j])
