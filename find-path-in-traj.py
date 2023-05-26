@@ -11,7 +11,6 @@ old_path_pdb   = str(sys.argv[2])
 traj_dcd       = str(sys.argv[3])
 new_path_pdb   = str(sys.argv[4])
 new_path_pdb2  = new_path_pdb.replace("models", "plumed")
-rmsd_cutoff    = float(sys.argv[5])
 
 old_path = mda.Universe(path_start_pdb, old_path_pdb)
 all_traj = mda.Universe(path_start_pdb, traj_dcd)
@@ -32,6 +31,11 @@ for i, frame_path in enumerate(old_path.trajectory):
     prmsd[0][i] = rrr[:,  0]  # 1st column traj index
     prmsd[1][i] = rrr[:, -1]  # 3rd column RMSD value
 
+#for i in range(n_path_frames):
+    #print(i, int(prmsd[0][i][0]), prmsd[1][i][0])
+rmsd_cutoff = np.amax(prmsd[1,:,0]) + 0.1
+print ("RMSD cutoff= ", rmsd_cutoff)
+
 # plt.imshow(prmsd[1], cmap='viridis', aspect='auto')
 # plt.xlabel('Frame (all_traj)')
 # plt.ylabel('Frame (old_path)')
@@ -41,12 +45,12 @@ for i, frame_path in enumerate(old_path.trajectory):
 rmsd_min = 1e10
 for i in range(n_traj_frames):
 
-    if( i>0 and prmsd[1][0][i] > rmsd_cutoff ):
+    if( prmsd[1][0][i] > rmsd_cutoff ):
         break
 
     for j in range(n_traj_frames):
     
-        if( j>0 and prmsd[1][1][j] > rmsd_cutoff ):
+        if( prmsd[1][1][j] > rmsd_cutoff ):
             break
 
         mobile_indx = int(prmsd[0][1][j])
@@ -72,7 +76,7 @@ for i in range(2, n_path_frames):
     rmsd_min = 1e10
     for j in range(n_traj_frames):
     
-        if( j>0 and prmsd[1][i][j] > rmsd_cutoff ):
+        if( prmsd[1][i][j] > rmsd_cutoff ):
             break
 
         mobile_indx = int(prmsd[0][i][j])
@@ -97,7 +101,7 @@ for i in range(2, n_path_frames):
             new_path_indx[i] = mobile_indx
             new_path_rmsd[i] = rmsd_min
             #print( rmsd_min, target_indx, mobile_indx );
-    #print("--------------------")
+    #print("--------------------",i)
 
 rmsd_avg = np.mean( new_path_rmsd[1:] )
 lam4plumed = 230. / rmsd_avg**2
