@@ -3,7 +3,7 @@ Released under MIT License
 
 Copyright (c) 2023 Psivant Therapeutics, LLC.
 
-Copyright (c) 2023 Istvan B Kolossvary.
+Copyright (c) 2023, 2024 Istvan B Kolossvary.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -56,6 +56,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #define NPOT            6       /* Number of potentials used in the model */
 #define ANM_CUTOFF      10.0    /* CA-CA distance cutoff in the ANM model */
 #define MAX_EN          11      /* Dimesion of the energy[] array */
+
+#define PATH_CONVERGENCE_CUTOFF 0.2 /* percenatge of rmsd_gap to define closeness to an endpoint */
+#define KINK_TEST               0.2 /* max percentage of rmsd_gap variation in frame to frame distance */
 
 # define DOT(n,v1,v2,dot)           \
 BEGIN_PRIMITIVE {                   \
@@ -504,7 +507,9 @@ read_pdb_file( int n_atom,
   i = 0;
   while( fgets( line, MAXBUF, pdb_file ) != NULL ) {
 
-    if( strstr( line, " CA") == NULL )
+    if( strstr( line, "ATOM  ") == NULL )
+      continue;
+    if( strstr( line, " CA")    == NULL )
       continue;
     sscanf( line+30, "%lf %lf %lf", &x[3*i], &x[3*i+1], &x[3*i+2] );
     if( ++i >= n_atom )
@@ -560,10 +565,11 @@ write_pdb_file( int n,  /* n_atom */
 error_msg
 read_reference_structures( int n_atom,
                            void * __restrict args,
+                           int do_transform,
                            FILE * pdb_file ) {  /* read first and last frame from input path */
 
   func_args_t * __restrict func_args = (func_args_t *) args;
-  int i, j, do_transform=0, in_place=1;
+  int i, j;
   double dist, rmsd[1];
   double * x;
   char line[MAXBUF];
@@ -575,6 +581,8 @@ read_reference_structures( int n_atom,
   i = 0;
   while( fgets( line, MAXBUF, pdb_file ) != NULL ) {
 
+    if( strstr( line, "ATOM  ") == NULL )
+      continue;
     if( strstr( line, " CA") == NULL )
       continue;
 
@@ -606,13 +614,15 @@ read_reference_structures( int n_atom,
   i = 0;
   while( fgets( line, MAXBUF, pdb_file ) != NULL ) {
 
+    if( strstr( line, "ATOM  ") == NULL )
+      continue;
     if( strstr( line, " CA") == NULL )
       continue;
 
     sscanf( line+30, "%lf %lf %lf", &x[3*i], &x[3*i+1], &x[3*i+2] );    /* read coordinates */
 
     if( ++i >= n_atom )
-      i = 0;    /* reset counter */
+      break;
   }
 
   if( ferror( pdb_file) ) {
@@ -1943,11 +1953,12 @@ lbfgs_minimize( eval_derivs_t * obj_func,
                 double * x,
                 double * fx,
                 double * grad,
+                int do_transform,
                 min_args_t * min_args ) {
 
   func_args_t * _func_args = (func_args_t *) func_args;
   error_msg err = SUCCESS;
-  int i, min_iter, min_conv, do_transform=0, in_place=1;
+  int i, min_iter, min_conv, in_place=1;
   int n_frame, save_path=min_args->save_path, which_path=min_args->which_path;
   double grms, dgrad, rmsd[1], rmsd1[1], rmsd2[1];
   double *p=NULL, *g_old=NULL, *g_dif=NULL;
@@ -2140,6 +2151,16 @@ lbfgs_minimize( eval_derivs_t * obj_func,
       }
       COPY( x_save, x, ndim );
       rmsd_save = rmsd[0];
+
+      /* Check if this frame is close enough to the endpoint and if so, terminate the path: */
+
+      if( fabs( rmsd1[0] - rmsd_gap) < PATH_CONVERGENCE_CUTOFF * rmsd_gap 
+      ||  fabs( rmsd2[0] - rmsd_gap) < PATH_CONVERGENCE_CUTOFF * rmsd_gap 
+      ||  rmsd1[0] < rmsd_gap 
+      ||  rmsd2[0] < rmsd_gap ) {
+
+        if( n_frame > 2 ) break;  /* n_frame>2 means that we are ~2*rmsd_gap distance from the starting point */
+      }
     }
   } while( ++min_iter <= min_args->iter_in );
 
@@ -2196,10 +2217,11 @@ minimize_reference_structures( int n_atom,
                                double * x,
                                double * fx,
                                double * grad,
+                               int do_transform, 
                                min_args_t * min_args ) {
 
   func_args_t * __restrict func_args = (func_args_t *) args;
-  int i=0, n=0, do_transform=0, in_place=1;
+  int i=0, n=0, in_place=1;
   double rmsd[1], rmsd1[1], rmsd2[1];
   char line[MAXBUF];
   error_msg err = SUCCESS;
@@ -2213,6 +2235,8 @@ minimize_reference_structures( int n_atom,
   rewind( pdb_file );  /* just in case */
   while( fgets( line, MAXBUF, pdb_file ) != NULL ) {
 
+    if( strstr( line, "ATOM  ") == NULL )
+      continue;
     if( strstr( line, " CA") == NULL )
       continue;
     
@@ -2223,7 +2247,7 @@ minimize_reference_structures( int n_atom,
 
     i = 0;      /* whole conformation read, reset counter */
 
-    TRY( lbfgs_minimize( obj_func, func_args, n_dim, x, fx, grad, min_args ) );
+    TRY( lbfgs_minimize( obj_func, func_args, n_dim, x, fx, grad, do_transform, min_args ) );
     if( n>0 )
       TRY( rmsfit( n_atom, ref_confs[0], x, rmsd, do_transform ) );
 
@@ -2259,7 +2283,7 @@ int
 main( int argc,
       char ** argv ) {
 
-  int i, j, i_save, j_save, n_atom, n_dim, do_transform=0, in_place=1;
+  int i, j, i_save, j_save, n_atom, n_dim, do_superposition;
   int normal_style=1, plumed_style=2, n_path_frame[2], n_tail_frame[2];
   double rmsd[1], rmsd_gap, rmsd_avg, rmsd_min, rmsd_max;
   double fc_posre=0.1;
@@ -2288,7 +2312,7 @@ main( int argc,
                                       };
 
   if( argc != 5 && argc != 6 ) {
-    ERROR(( "Usage:  %s  n_CA_atoms  endpoints_confs_pdb_fname  CA_transition_path_fname(no extension)  rmsd_gap_between_output_frames_Angs  [fc_pull]", argv[0] ));
+    ERROR(( "Usage:  %s  n_CA_atoms  endpoints_confs_pdb_fname  CA_transition_path_fname(no extension)  rmsd_gap_between_output_frames_Angs  do_superposition?(0, 1)  [fc_pull]", argv[0] ));
     goto cleanup;
   }
 
@@ -2301,9 +2325,10 @@ main( int argc,
   strcpy( output_fname2, output_fname );
   strcpy( plumed_fname2, output_fname );
   rmsd_gap = atof( argv[4] );
-  if( argc == 6 ) {
+  do_superposition = !atoi( argv[5] );
+  if( argc == 7 ) {
 
-    fc_posre = atof( argv[5] );
+    fc_posre = atof( argv[6] );
   }
 
   for( i=0; i<argc; i++ ) {
@@ -2360,10 +2385,10 @@ main( int argc,
 
   elapsed = wallclock();
 
-  TRY( read_reference_structures( n_atom, func_args, input_file ) );  /* read both reference structures, copy them to func_args->min[1,2]_xyz */
+  TRY( read_reference_structures( n_atom, func_args, do_superposition, input_file ) );  /* read both reference structures, copy them to func_args->min[1,2]_xyz */
   TRY( minimize_reference_structures( n_atom, func_args, input_file, 
                                       ref_confs_min, sanm_energy,  
-                                      n_dim, xyz, energy, grad, min_args ) );
+                                      n_dim, xyz, energy, grad, do_superposition, min_args ) );
 
   /* Build a path from min1 to min2 and also a reverse path from min2 to min1: */
 
@@ -2379,12 +2404,12 @@ main( int argc,
     min_args->path = &path_frames[i*MAXFRAMES];
     min_args->which_path = i;
   //min_args->visual_debug=1;
-    TRY( lbfgs_minimize( sanm_energy, func_args, n_dim, xyz, energy, grad, min_args ) );
+    TRY( lbfgs_minimize( sanm_energy, func_args, n_dim, xyz, energy, grad, do_superposition, min_args ) );
     n_tail_frame[i] = min_args->n_path_frame[i];
 
     COPY(                  xyz, path_frames[i*MAXFRAMES+n_tail_frame[i] -1], n_dim );
     COPY( func_args->posre_xyz, ref_confs_min[1-i], n_dim );
-    TRY( lbfgs_minimize( pull_energy, func_args, n_dim, xyz, energy, grad, min_args ) );
+    TRY( lbfgs_minimize( pull_energy, func_args, n_dim, xyz, energy, grad, do_superposition, min_args ) );
     n_path_frame[i] = min_args->n_path_frame[i];
 
     COPY(                  xyz, func_args->min2_xyz, n_dim );
@@ -2424,7 +2449,7 @@ main( int argc,
   for( i=0; i <n_path_frame[0]; i++ ) {  /* forward path */
 
     if( i>0 ) { 
-      TRY( rmsfit( n_atom, path_frames[i-1], path_frames[i], rmsd, do_transform ) );
+      TRY( rmsfit( n_atom, path_frames[i-1], path_frames[i], rmsd, do_superposition ) );
       rmsd_avg += rmsd[0];
       if( rmsd[0] < rmsd_min ) rmsd_min = rmsd[0];
       if( rmsd[0] > rmsd_max ) rmsd_max = rmsd[0];
@@ -2470,8 +2495,8 @@ main( int argc,
   log_printf( "\"\"\"\n" );
 
   /* Check for kink in the path: */
-  if( fabs( rmsd_avg - rmsd_min ) / rmsd_avg > 0.3 
-   || fabs( rmsd_avg - rmsd_max ) / rmsd_avg > 0.3 ) {
+  if( fabs( rmsd_avg - rmsd_min ) / rmsd_avg > KINK_TEST 
+   || fabs( rmsd_avg - rmsd_max ) / rmsd_avg > KINK_TEST ) {
 
     log_printf( "\n WARNING: kink found in the path, try slightly changing rmsd_gap\n\n" );
     log_printf( " rmsd_avg=%6.2f  rmsd_min=%6.2f  rmsd_max=%6.2f\n", rmsd_avg, rmsd_min, rmsd_max );
@@ -2490,7 +2515,7 @@ main( int argc,
   for( i=0; i <n_path_frame[1]; i++ ) {  /* reverse path */
 
     if( i>0 ) {
-      TRY( rmsfit( n_atom, path_frames[MAXFRAMES+i-1], path_frames[MAXFRAMES+i], rmsd, do_transform ) );
+      TRY( rmsfit( n_atom, path_frames[MAXFRAMES+i-1], path_frames[MAXFRAMES+i], rmsd, do_superposition ) );
       rmsd_avg += rmsd[0];
       if( rmsd[0] < rmsd_min ) rmsd_min = rmsd[0];
       if( rmsd[0] > rmsd_max ) rmsd_max = rmsd[0];
@@ -2551,7 +2576,7 @@ main( int argc,
 #if 0
  test:
 
-  TRY( read_reference_structures( n_atom, func_args, input_file ) );  /* read first and last frame, copy them to func_args->min[1,2]_xyz */
+  TRY( read_reference_structures( n_atom, func_args, do_superposition, input_file ) );  /* read first and last frame, copy them to func_args->min[1,2]_xyz */
   COPY( xyz, func_args->min1_xyz, n_dim );
   TRY( calc_derivs( sanm_energy, n_dim, xyz, energy, grad, func_args ) );
   TRY( debug_derivs(sanm_energy, n_dim, xyz, energy, grad, func_args ) );
