@@ -24,7 +24,7 @@ Following the instructions below will regenerate the test files and familiarize 
 gcc -o CA-transition-path.exe -O3 CA-transition-path.c common.c -lm
 ./CA-transition-path.exe
 CA-transition-path.c(2551): ERROR
-	Usage:  ./CA-transition-path.exe  n_CA_atoms  endpoints_confs_pdb_fname  CA_transition_path_fname(no extension)  rmsd_gap_between_output_frames_Angs
+	Usage:  ./CA-transition-path.exe  n_CA_atoms  endpoints_confs_pdb_fname  CA_transition_path_fname(no extension)  rmsd_gap_between_output_frames_Angs  do_superposition?(0, 1)  [fc_pull]
 
 gcc -o ca2bb.exe -O3 ca2bb.c -lm
 ./ca2bb.exe
@@ -38,7 +38,7 @@ grep -c CA STING-metin-AA.pdb
 ```
 ### 3. Generate the CA transtion path:
 ```
-./CA-transition-path.exe 368 STING-endpoints-AA.pdb STING-metinout-path-CA 0.3 >& STING-metinout-path-CA.log
+./CA-transition-path.exe 368 STING-endpoints-AA.pdb STING-metinout-path-CA 0.3 1 >& STING-metinout-path-CA.log
 ```
 The logfile shows RMSD values between consecutive frames and also with respect to the endpoint structures. Note that there are two paths generated one termed "forward" and another "reverse", see details in the publication. The logfile also inlcudes a template of PLUMED input for running path-CV meta-eABF simulation using the generated path.
 
